@@ -20,13 +20,8 @@ import traceback
 import sqlite3
 
 # -------------------------------------------------------------------
-# Preparar rutas / imports
+# ORM / CRUD + modelos
 # -------------------------------------------------------------------
-ROOT = pathlib.Path(__file__).resolve().parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-# Importar helpers de la capa ORM
 try:
     from ORM_clientes.database import get_session, test_connection
     from ORM_clientes.crud.ingredientes_crud import (
@@ -39,26 +34,33 @@ try:
     from ORM_clientes.crud.pedido_crud import listar_pedidos
 except Exception as e:
     print("ERROR: no se pudieron importar los módulos ORM desde 'ORM_clientes'.")
-    print("Asegúrate de ejecutar desde la raíz del proyecto (cd c:\\Users\\franc\\OneDrive\\Escritorio\\Ev3).")
-    print("Contenido de sys.path (primeros elementos):")
-    for p in sys.path[:6]:
-        print("  ", p)
-    print("\nTraceback completo:")
     traceback.print_exc()
-    raise SystemExit(1)
+    raise
 
-# Importar modelo Ingrediente del ORM
 try:
     from ORM_clientes.models import Ingrediente as IngredienteModel
+    from ORM_clientes.models import Menu as MenuModel
+    from ORM_clientes.models import Pedido as PedidoModel
+    from ORM_clientes.models import PedidoDetalle as PedidoDetalleModel
 except Exception:
-    try:
-        from models import Ingrediente as IngredienteModel  # type: ignore
-    except Exception:
-        IngredienteModel = None
+    IngredienteModel = None
+    MenuModel = None
+    PedidoModel = None
+    PedidoDetalleModel = None
+
+# Graficos (pestaña Gráficos)
+try:
+    from ORM_clientes import graficos as graficos_mod
+except Exception:
+    graficos_mod = None
 
 # -------------------------------------------------------------------
-# Migración ligera de la tabla ingredientes (añadir created_at/updated_at)
+# Preparar rutas / DB / migración
 # -------------------------------------------------------------------
+ROOT = pathlib.Path(__file__).resolve().parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 DB = ROOT / "restaurante.db"
 
 if not DB.exists():
@@ -124,13 +126,13 @@ class AplicacionConPestanas(ctk.CTk):
         self.tabview = ctk.CTkTabview(self, command=self.on_tab_change)
         self.tabview.pack(expand=True, fill="both", padx=10, pady=10)
 
-        self.crear_pestanas()
-
         # Sesión compartida para operaciones CRUD (cerrar en on_close)
         try:
             self.session = get_session()
         except Exception:
             self.session = None
+
+        self.crear_pestanas()
 
         # Cargar stock inicial desde la BD (para que persista entre ejecuciones)
         self._cargar_stock_desde_bd()
@@ -141,6 +143,236 @@ class AplicacionConPestanas(ctk.CTk):
             self.protocol("WM_DELETE_WINDOW", self.on_close)
         except Exception:
             pass
+
+    # ---------- CLIENTES (desde app.py) ----------
+    def _build_tab_clientes(self):
+        frame = ctk.CTkFrame(self.tab_clientes)
+        frame.pack(expand=True, fill="both", padx=10, pady=10)
+
+        label = ctk.CTkLabel(frame, text="Gestión de Clientes (ORM)")
+        label.pack(pady=10)
+
+        self.txt_clientes = ctk.CTkTextbox(frame, width=700, height=350)
+        self.txt_clientes.pack(expand=True, fill="both", padx=10, pady=10)
+
+        btn_refrescar = ctk.CTkButton(
+            frame,
+            text="Listar clientes",
+            command=self.refrescar_clientes_tab
+        )
+        btn_refrescar.pack(pady=5)
+
+    def refrescar_clientes_tab(self):
+        """Usa listar_clientes y muestra en la pestaña Clientes."""
+        try:
+            sess = self.session or get_session()
+            clientes = listar_clientes(sess, solo_activos=False)
+            self.txt_clientes.delete("1.0", "end")
+            for c in clientes:
+                self.txt_clientes.insert(
+                    "end",
+                    f"{c.id} - {c.nombre} - {getattr(c, 'email', '')} - Activo: {c.activo}\n"
+                )
+        except Exception as e:
+            CTkMessagebox(
+                title="Error",
+                message=f"No se pudo obtener lista de clientes:\n{e}",
+                icon="warning",
+            )
+
+    # ---------- INGREDIENTES (ORM) ----------
+    def _build_tab_ingredientes_orm(self):
+        frame = ctk.CTkFrame(self.tab_ing_orm)
+        frame.pack(expand=True, fill="both", padx=10, pady=10)
+
+        label = ctk.CTkLabel(frame, text="Ingredientes en BD (ORM)")
+        label.pack(pady=10)
+
+        self.txt_ingredientes_orm = ctk.CTkTextbox(frame, width=700, height=350)
+        self.txt_ingredientes_orm.pack(expand=True, fill="both", padx=10, pady=10)
+
+        btn_refrescar = ctk.CTkButton(
+            frame,
+            text="Listar ingredientes",
+            command=self.refrescar_ingredientes_tab
+        )
+        btn_refrescar.pack(pady=5)
+
+    def refrescar_ingredientes_tab(self):
+        """Usa listar_ingredientes y muestra en la pestaña Ingredientes (ORM)."""
+        try:
+            sess = self.session or get_session()
+            ings = listar_ingredientes(sess, solo_activos=False)
+            self.txt_ingredientes_orm.delete("1.0", "end")
+            for i in ings:
+                self.txt_ingredientes_orm.insert(
+                    "end",
+                    f"{i.id} - {i.nombre} | stock: {i.stock_actual} {i.unidad} "
+                    f"| precio: {i.precio_unitario}\n"
+                )
+        except Exception as e:
+            CTkMessagebox(
+                title="Error",
+                message=f"No se pudo obtener lista de ingredientes:\n{e}",
+                icon="warning",
+            )
+
+    # ---------- MENÚS (ORM) ----------
+    def _build_tab_menus_orm(self):
+        frame = ctk.CTkFrame(self.tab_menus_orm)
+        frame.pack(expand=True, fill="both", padx=10, pady=10)
+
+        label = ctk.CTkLabel(frame, text="Menús en BD (ORM)")
+        label.pack(pady=10)
+
+        self.txt_menus_orm = ctk.CTkTextbox(frame, width=700, height=350)
+        self.txt_menus_orm.pack(expand=True, fill="both", padx=10, pady=10)
+
+        btn_refrescar = ctk.CTkButton(
+            frame,
+            text="Listar menús",
+            command=self.refrescar_menus_tab
+        )
+        btn_refrescar.pack(pady=5)
+
+    def refrescar_menus_tab(self):
+        try:
+            sess = self.session or get_session()
+            menus = listar_menus(sess, solo_activos=False)
+            self.txt_menus_orm.delete("1.0", "end")
+            for m in menus:
+                self.txt_menus_orm.insert(
+                    "end",
+                    f"{m.id} - {m.nombre} | ${m.precio} | Activo: {m.activo}\n"
+                )
+        except Exception as e:
+            CTkMessagebox(
+                title="Error",
+                message=f"No se pudo obtener lista de menús:\n{e}",
+                icon="warning",
+            )
+
+    # ---------- PEDIDOS (ORM) ----------
+    def _build_tab_pedidos_orm(self):
+        frame = ctk.CTkFrame(self.tab_pedidos_orm)
+        frame.pack(expand=True, fill="both", padx=10, pady=10)
+
+        label = ctk.CTkLabel(frame, text="Pedidos en BD (ORM)")
+        label.pack(pady=10)
+
+        self.txt_pedidos_orm = ctk.CTkTextbox(frame, width=700, height=350)
+        self.txt_pedidos_orm.pack(expand=True, fill="both", padx=10, pady=10)
+
+        btn_refrescar = ctk.CTkButton(
+            frame,
+            text="Listar pedidos",
+            command=self.refrescar_pedidos_tab
+        )
+        btn_refrescar.pack(pady=5)
+
+    def refrescar_pedidos_tab(self):
+        try:
+            sess = self.session or get_session()
+            pedidos = listar_pedidos(sess)
+            self.txt_pedidos_orm.delete("1.0", "end")
+            for p in pedidos:
+                self.txt_pedidos_orm.insert(
+                    "end",
+                    f"{p.id} - Cliente: {p.cliente_id} | Fecha: {p.fecha} "
+                    f"| Total: ${p.total} | Estado: {p.estado}\n"
+                )
+        except Exception as e:
+            CTkMessagebox(
+                title="Error",
+                message=f"No se pudo obtener lista de pedidos:\n{e}",
+                icon="warning",
+            )
+
+    # ---------- GRÁFICOS ----------
+    def _build_tab_graficos(self):
+        frame = ctk.CTkFrame(self.tab_graficos)
+        frame.pack(expand=True, fill="both", padx=10, pady=10)
+
+        label = ctk.CTkLabel(frame, text="Gráficos de Ventas / Pedidos")
+        label.pack(pady=10)
+
+        if graficos_mod is None:
+            msg = "Módulo 'graficos' no disponible. Revisa imports."
+            ctk.CTkLabel(frame, text=msg, text_color="red").pack(pady=10)
+            return
+
+        btn_ventas_fecha = ctk.CTkButton(
+            frame,
+            text="Ventas por fecha",
+            command=self._grafico_ventas_por_fecha
+        )
+        btn_ventas_fecha.pack(pady=5)
+
+        btn_mas_pedidos = ctk.CTkButton(
+            frame,
+            text="Menús más pedidos",
+            command=self._grafico_menus_mas_pedidos
+        )
+        btn_mas_pedidos.pack(pady=5)
+
+        # Ejemplo visible de map / filter / reduce + lambda sobre el stock
+        btn_resumen_stock = ctk.CTkButton(
+            frame,
+            text="Resumen de stock (map/filter/reduce)",
+            command=self._resumen_stock_funcional
+        )
+        btn_resumen_stock.pack(pady=15)
+
+    def _grafico_ventas_por_fecha(self):
+        try:
+            sess = self.session or get_session()
+            graficos_mod.grafico_ventas_por_fecha(sess)
+        except Exception as e:
+            CTkMessagebox(
+                title="Error",
+                message=f"No se pudo generar gráfico de ventas:\n{e}",
+                icon="warning",
+            )
+
+    def _grafico_menus_mas_pedidos(self):
+        try:
+            sess = self.session or get_session()
+            graficos_mod.grafico_menus_mas_pedidos(sess)
+        except Exception as e:
+            CTkMessagebox(
+                title="Error",
+                message=f"No se pudo generar gráfico de menús:\n{e}",
+                icon="warning",
+            )
+
+    def _resumen_stock_funcional(self):
+        """Ejemplo explícito de map / filter / reduce + lambda sobre el stock."""
+        from functools import reduce
+
+        cantidades = list(
+            map(
+                lambda ing: float(getattr(ing, "cantidad", 0.0) or 0.0),
+                self.stock.lista_ingredientes,
+            )
+        )
+        total_stock = reduce(lambda acc, x: acc + x, cantidades, 0.0)
+
+        bajos = list(
+            filter(
+                lambda ing: float(getattr(ing, "cantidad", 0.0) or 0.0) < 1.0,
+                self.stock.lista_ingredientes,
+            )
+        )
+        nombres_bajos = ", ".join(ing.nombre for ing in bajos) if bajos else "Ninguno"
+
+        CTkMessagebox(
+            title="Resumen de Stock",
+            message=(
+                f"Total de unidades (map+reduce): {total_stock:.2f}\n"
+                f"Ingredientes con stock < 1 (filter+lambda): {nombres_bajos}"
+            ),
+            icon="info",
+        )
 
     # ------------------------------------------------------------------
     # Gestión de cierre
@@ -191,10 +423,9 @@ class AplicacionConPestanas(ctk.CTk):
                 session.close()
 
     # ------------------------------------------------------------------
-    # Ventanas auxiliares de listados
+    # Ventanas auxiliares de listados (emergentes)
     # ------------------------------------------------------------------
     def refrescar_clientes(self):
-        """Mostrar lista de clientes en una ventana emergente (usa listar_clientes)."""
         try:
             sess = self.session or get_session()
             clientes = listar_clientes(sess, solo_activos=False)
@@ -215,7 +446,6 @@ class AplicacionConPestanas(ctk.CTk):
             )
 
     def refrescar_ingredientes(self):
-        """Mostrar lista de ingredientes (usa listar_ingredientes)."""
         try:
             sess = self.session or get_session()
             ings = listar_ingredientes(sess, solo_activos=False)
@@ -237,7 +467,6 @@ class AplicacionConPestanas(ctk.CTk):
             )
 
     def refrescar_menus(self):
-        """Mostrar lista de menús (usa listar_menus)."""
         try:
             sess = self.session or get_session()
             menus = listar_menus(sess, solo_activos=False)
@@ -258,7 +487,6 @@ class AplicacionConPestanas(ctk.CTk):
             )
 
     def refrescar_pedidos(self):
-        """Mostrar lista de pedidos (usa listar_pedidos)."""
         try:
             sess = self.session or get_session()
             pedidos = listar_pedidos(sess)
@@ -288,7 +516,8 @@ class AplicacionConPestanas(ctk.CTk):
             self.actualizar_treeview()
 
     def crear_pestanas(self):
-        self.tab3 = self.tabview.add("carga de ingredientes")
+        # Pestañas originales de tu app
+        self.tab3 = self.tabview.add("Carga de CSV")
         self.tab1 = self.tabview.add("Stock")
         self.tab4 = self.tabview.add("Carta restorante")
         self.tab2 = self.tabview.add("Pedido")
@@ -299,6 +528,19 @@ class AplicacionConPestanas(ctk.CTk):
         self.configurar_pestana3()
         self._configurar_pestana_crear_menu()
         self._configurar_pestana_ver_boleta()
+
+        # NUEVAS pestañas migradas desde app.py
+        self.tab_clientes = self.tabview.add("Clientes")
+        self.tab_ing_orm = self.tabview.add("Ingredientes")
+        self.tab_menus_orm = self.tabview.add("Menús")
+        self.tab_pedidos_orm = self.tabview.add("Pedidos")
+        self.tab_graficos = self.tabview.add("Gráficos")
+
+        self._build_tab_clientes()
+        self._build_tab_ingredientes_orm()
+        self._build_tab_menus_orm()
+        self._build_tab_pedidos_orm()
+        self._build_tab_graficos()
 
     # ------------------------------------------------------------------
     # Pestaña 3: carga CSV + ORM
@@ -324,7 +566,9 @@ class AplicacionConPestanas(ctk.CTk):
         self.csv_path = None  # ruta del CSV
 
         self.boton_agregar_stock = ctk.CTkButton(
-            self.frame_tabla_csv, text="Agregar al Stock", command=self.agregar_csv_al_stock
+            self.frame_tabla_csv,
+            text="Agregar al Stock",
+            command=self.agregar_csv_al_stock,
         )
         self.boton_agregar_stock.pack(side="bottom", pady=10)
 
@@ -366,8 +610,8 @@ class AplicacionConPestanas(ctk.CTk):
                 CTkMessagebox(
                     title="Carga completada",
                     message=(
-                        f"Importados: {resumen.get('importados',0)}, "
-                        f"Actualizados: {resumen.get('actualizados',0)}"
+                        f"Importados: {resumen.get('importados', 0)}, "
+                        f"Actualizados: {resumen.get('actualizados', 0)}"
                     ),
                     icon="info",
                 )
@@ -409,7 +653,10 @@ class AplicacionConPestanas(ctk.CTk):
 
                         existente = (
                             session.query(IngredienteModel)
-                            .filter(func.lower(IngredienteModel.nombre) == nombre.casefold())
+                            .filter(
+                                func.lower(IngredienteModel.nombre)
+                                == nombre.casefold()
+                            )
                             .one_or_none()
                         )
 
@@ -515,7 +762,7 @@ class AplicacionConPestanas(ctk.CTk):
             )
 
     def mostrar_dataframe_en_tabla(self, df):
-        if self.tabla_csv:
+        if getattr(self, "tabla_csv", None):
             self.tabla_csv.destroy()
 
         self.tabla_csv = ttk.Treeview(
@@ -659,7 +906,9 @@ class AplicacionConPestanas(ctk.CTk):
         self.entry_cantidad.pack(pady=5)
 
         self.boton_ingresar = ctk.CTkButton(
-            frame_formulario, text="Ingresar Ingrediente", command=self.ingresar_ingrediente
+            frame_formulario,
+            text="Ingresar Ingrediente",
+            command=self.ingresar_ingrediente,
         )
         self.boton_ingresar.pack(pady=10)
 
@@ -959,7 +1208,9 @@ class AplicacionConPestanas(ctk.CTk):
             nombre_norm = nombre.strip().casefold()
             unidad_norm = unidad.strip().casefold()
 
-        ingrediente = Ingrediente(nombre=nombre_norm, unidad=unidad_norm, cantidad=cantidad)
+        ingrediente = Ingrediente(
+            nombre=nombre_norm, unidad=unidad_norm, cantidad=cantidad
+        )
         self.stock.agregar_ingrediente(ingrediente)
 
         try:
@@ -1009,7 +1260,9 @@ class AplicacionConPestanas(ctk.CTk):
             except (ValueError, TypeError):
                 cantidad_mostrar = str(ingrediente.cantidad)
             self.tree.insert(
-                "", "end", values=(ingrediente.nombre, ingrediente.unidad, cantidad_mostrar)
+                "",
+                "end",
+                values=(ingrediente.nombre, ingrediente.unidad, cantidad_mostrar),
             )
 
     # ------------------------------------------------------------------
@@ -1036,7 +1289,8 @@ class AplicacionConPestanas(ctk.CTk):
                     getattr(ingrediente_obj, "cantidad", 0.0) or 0.0
                 )
                 existente.unidad = (
-                    getattr(ingrediente_obj, "unidad", existente.unidad) or existente.unidad
+                    getattr(ingrediente_obj, "unidad", existente.unidad)
+                    or existente.unidad
                 )
                 session.add(existente)
             else:
