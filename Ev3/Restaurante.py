@@ -18,6 +18,8 @@ import sys
 import pathlib
 import traceback
 import sqlite3
+from datetime import datetime
+from sqlalchemy import func
 
 # -------------------------------------------------------------------
 # ORM / CRUD + modelos
@@ -123,6 +125,10 @@ class AplicacionConPestanas(ctk.CTk):
         self.pedido = Pedido()
         self.menus = get_default_menus()
 
+        # Cliente seleccionado para el pedido actual
+        self.cliente_seleccionado = None
+        self._clientes_cache = []
+
         self.tabview = ctk.CTkTabview(self, command=self.on_tab_change)
         self.tabview.pack(expand=True, fill="both", padx=10, pady=10)
 
@@ -158,7 +164,7 @@ class AplicacionConPestanas(ctk.CTk):
         btn_refrescar = ctk.CTkButton(
             frame,
             text="Listar clientes",
-            command=self.refrescar_clientes_tab
+            command=self.refrescar_clientes_tab,
         )
         btn_refrescar.pack(pady=5)
 
@@ -171,7 +177,7 @@ class AplicacionConPestanas(ctk.CTk):
             for c in clientes:
                 self.txt_clientes.insert(
                     "end",
-                    f"{c.id} - {c.nombre} - {getattr(c, 'email', '')} - Activo: {c.activo}\n"
+                    f"{c.id} - {c.nombre} - {getattr(c, 'email', '')} - Activo: {c.activo}\n",
                 )
         except Exception as e:
             CTkMessagebox(
@@ -188,27 +194,23 @@ class AplicacionConPestanas(ctk.CTk):
         label = ctk.CTkLabel(frame, text="Ingredientes en BD (ORM)")
         label.pack(pady=10)
 
-        self.txt_ingredientes_orm = ctk.CTkTextbox(frame, width=700, height=350)
-        self.txt_ingredientes_orm.pack(expand=True, fill="both", padx=10, pady=10)
+        self.txt_ing_orm = ctk.CTkTextbox(frame, width=700, height=350)
+        self.txt_ing_orm.pack(expand=True, fill="both", padx=10, pady=10)
 
         btn_refrescar = ctk.CTkButton(
-            frame,
-            text="Listar ingredientes",
-            command=self.refrescar_ingredientes_tab
+            frame, text="Listar ingredientes", command=self.refrescar_ingredientes_tab
         )
         btn_refrescar.pack(pady=5)
 
     def refrescar_ingredientes_tab(self):
-        """Usa listar_ingredientes y muestra en la pestaña Ingredientes (ORM)."""
         try:
             sess = self.session or get_session()
             ings = listar_ingredientes(sess, solo_activos=False)
-            self.txt_ingredientes_orm.delete("1.0", "end")
+            self.txt_ing_orm.delete("1.0", "end")
             for i in ings:
-                self.txt_ingredientes_orm.insert(
+                self.txt_ing_orm.insert(
                     "end",
-                    f"{i.id} - {i.nombre} | stock: {i.stock_actual} {i.unidad} "
-                    f"| precio: {i.precio_unitario}\n"
+                    f"{i.id} - {i.nombre} | stock: {i.stock_actual} {i.unidad} | precio: {i.precio_unitario}\n",
                 )
         except Exception as e:
             CTkMessagebox(
@@ -229,9 +231,7 @@ class AplicacionConPestanas(ctk.CTk):
         self.txt_menus_orm.pack(expand=True, fill="both", padx=10, pady=10)
 
         btn_refrescar = ctk.CTkButton(
-            frame,
-            text="Listar menús",
-            command=self.refrescar_menus_tab
+            frame, text="Listar menús", command=self.refrescar_menus_tab
         )
         btn_refrescar.pack(pady=5)
 
@@ -243,7 +243,7 @@ class AplicacionConPestanas(ctk.CTk):
             for m in menus:
                 self.txt_menus_orm.insert(
                     "end",
-                    f"{m.id} - {m.nombre} | ${m.precio} | Activo: {m.activo}\n"
+                    f"{m.id} - {m.nombre} | ${m.precio} | Activo: {m.activo}\n",
                 )
         except Exception as e:
             CTkMessagebox(
@@ -264,9 +264,7 @@ class AplicacionConPestanas(ctk.CTk):
         self.txt_pedidos_orm.pack(expand=True, fill="both", padx=10, pady=10)
 
         btn_refrescar = ctk.CTkButton(
-            frame,
-            text="Listar pedidos",
-            command=self.refrescar_pedidos_tab
+            frame, text="Listar pedidos", command=self.refrescar_pedidos_tab
         )
         btn_refrescar.pack(pady=5)
 
@@ -279,7 +277,7 @@ class AplicacionConPestanas(ctk.CTk):
                 self.txt_pedidos_orm.insert(
                     "end",
                     f"{p.id} - Cliente: {p.cliente_id} | Fecha: {p.fecha} "
-                    f"| Total: ${p.total} | Estado: {p.estado}\n"
+                    f"| Total: ${p.total} | Estado: {p.estado}\n",
                 )
         except Exception as e:
             CTkMessagebox(
@@ -302,16 +300,12 @@ class AplicacionConPestanas(ctk.CTk):
             return
 
         btn_ventas_fecha = ctk.CTkButton(
-            frame,
-            text="Ventas por fecha",
-            command=self._grafico_ventas_por_fecha
+            frame, text="Ventas por fecha", command=self._grafico_ventas_por_fecha
         )
         btn_ventas_fecha.pack(pady=5)
 
         btn_mas_pedidos = ctk.CTkButton(
-            frame,
-            text="Menús más pedidos",
-            command=self._grafico_menus_mas_pedidos
+            frame, text="Menús más pedidos", command=self._grafico_menus_mas_pedidos
         )
         btn_mas_pedidos.pack(pady=5)
 
@@ -319,7 +313,7 @@ class AplicacionConPestanas(ctk.CTk):
         btn_resumen_stock = ctk.CTkButton(
             frame,
             text="Resumen de stock (map/filter/reduce)",
-            command=self._resumen_stock_funcional
+            command=self._resumen_stock_funcional,
         )
         btn_resumen_stock.pack(pady=15)
 
@@ -516,7 +510,7 @@ class AplicacionConPestanas(ctk.CTk):
             self.actualizar_treeview()
 
     def crear_pestanas(self):
-        # Pestañas originales de tu app
+        # Pestañas originales
         self.tab3 = self.tabview.add("Carga de CSV")
         self.tab1 = self.tabview.add("Stock")
         self.tab4 = self.tabview.add("Carta restorante")
@@ -529,7 +523,7 @@ class AplicacionConPestanas(ctk.CTk):
         self._configurar_pestana_crear_menu()
         self._configurar_pestana_ver_boleta()
 
-        # NUEVAS pestañas migradas desde app.py
+        # Nuevas pestañas ORM / Gráficos
         self.tab_clientes = self.tabview.add("Clientes")
         self.tab_ing_orm = self.tabview.add("Ingredientes")
         self.tab_menus_orm = self.tabview.add("Menús")
@@ -618,8 +612,6 @@ class AplicacionConPestanas(ctk.CTk):
 
             # 2) CSV simple: nombre + cantidad (+ unidad opcional)
             elif {"nombre", "cantidad"}.issubset(cols):
-                from sqlalchemy import func
-
                 import_count = 0
                 upd_count = 0
                 errores = []
@@ -1026,11 +1018,18 @@ class AplicacionConPestanas(ctk.CTk):
             try:
                 icono = self.cargar_icono_menu(menu.icono_path)
                 imagen_label = ctk.CTkLabel(
-                    tarjeta, image=icono, width=64, height=64, text="", fg_color="transparent"
+                    tarjeta,
+                    image=icono,
+                    width=64,
+                    height=64,
+                    text="",
+                    fg_color="transparent",
                 )
                 imagen_label.image = icono
                 imagen_label.pack(anchor="center", pady=5, padx=10)
-                imagen_label.bind("<Button-1>", lambda event: self.tarjeta_click(event, menu))
+                imagen_label.bind(
+                    "<Button-1>", lambda event: self.tarjeta_click(event, menu)
+                )
             except Exception as e:
                 print(f"No se pudo cargar la imagen '{menu.icono_path}': {e}")
 
@@ -1102,7 +1101,10 @@ class AplicacionConPestanas(ctk.CTk):
             )
 
     def generar_boleta(self):
-        """Genera la boleta en PDF utilizando BoletaFacade y actualiza el visor."""
+        """
+        Genera la boleta en PDF utilizando BoletaFacade
+        y guarda el pedido en la BD asociado al cliente seleccionado.
+        """
         try:
             if not self.pedido.menus:
                 CTkMessagebox(
@@ -1112,10 +1114,35 @@ class AplicacionConPestanas(ctk.CTk):
                 )
                 return
 
+            cliente = self.cliente_seleccionado
+            if cliente is None:
+                CTkMessagebox(
+                    title="Error",
+                    message="Debes seleccionar un cliente antes de generar la boleta.",
+                    icon="warning",
+                )
+                return
+
+            # Guardar pedido + detalles en BD
+            try:
+                pedido_id = self._guardar_pedido_en_bd(cliente.id)
+                print("Pedido guardado con id:", pedido_id)
+            except Exception as e:
+                CTkMessagebox(
+                    title="Error",
+                    message=f"No se pudo guardar el pedido en la BD.\n{e}",
+                    icon="warning",
+                )
+                return
+
+            # Generar boleta PDF
             boleta = BoletaFacade(self.pedido)
             mensaje = boleta.generar_boleta()
             CTkMessagebox(title="Boleta Generada", message=mensaje, icon="info")
+
+            # Mostrar la boleta en la pestaña correspondiente
             self.mostrar_boleta()
+
         except Exception as e:
             CTkMessagebox(
                 title="Error",
@@ -1130,6 +1157,19 @@ class AplicacionConPestanas(ctk.CTk):
         frame_intermedio = ctk.CTkFrame(self.tab2)
         frame_intermedio.pack(side="top", fill="x", padx=10, pady=5)
 
+        # Selector de cliente
+        label_cliente = ctk.CTkLabel(frame_intermedio, text="Cliente:")
+        label_cliente.pack(side="left", padx=(10, 5))
+
+        self.combo_clientes = ctk.CTkComboBox(
+            frame_intermedio,
+            values=[],
+            width=250,
+            command=self._on_cliente_cambiado,
+        )
+        self.combo_clientes.pack(side="left", padx=(0, 10))
+
+        # Frame donde van las tarjetas de menús
         self.tarjetas_frame = ctk.CTkFrame(frame_superior)
         self.tarjetas_frame.pack(expand=True, fill="both", padx=10, pady=10)
 
@@ -1163,6 +1203,37 @@ class AplicacionConPestanas(ctk.CTk):
             frame_inferior, text="Generar Boleta", command=self.generar_boleta
         )
         self.boton_generar_boleta.pack(side="bottom", pady=10)
+
+        # Cargar clientes al combobox
+        self._cargar_clientes_combobox()
+
+    def _cargar_clientes_combobox(self):
+        """Carga los clientes desde la BD al combobox de la pestaña Pedido."""
+        try:
+            sess = self.session or get_session()
+            clientes = listar_clientes(sess, solo_activos=True)
+            self._clientes_cache = clientes
+
+            valores = [f"{c.id} - {c.nombre}" for c in clientes]
+            if hasattr(self, "combo_clientes"):
+                self.combo_clientes.configure(values=valores)
+                if valores:
+                    self.combo_clientes.set(valores[0])
+                    self.cliente_seleccionado = clientes[0]
+        except Exception as e:
+            CTkMessagebox(
+                title="Error",
+                message=f"No se pudieron cargar los clientes en el selector:\n{e}",
+                icon="warning",
+            )
+
+    def _on_cliente_cambiado(self, value: str):
+        """Actualiza self.cliente_seleccionado cuando el usuario cambia el combobox."""
+        for c in getattr(self, "_clientes_cache", []):
+            etiqueta = f"{c.id} - {c.nombre}"
+            if etiqueta == value:
+                self.cliente_seleccionado = c
+                break
 
     # ------------------------------------------------------------------
     # Validaciones + CRUD de stock manual
@@ -1275,8 +1346,6 @@ class AplicacionConPestanas(ctk.CTk):
             return
         session = None
         try:
-            from sqlalchemy import func
-
             session = get_session()
             nombre_norm = (ingrediente_obj.nombre or "").strip()
             existente = (
@@ -1320,8 +1389,6 @@ class AplicacionConPestanas(ctk.CTk):
             return
         session = None
         try:
-            from sqlalchemy import func
-
             session = get_session()
             nombre_norm = (nombre or "").strip()
             existente = (
@@ -1348,6 +1415,68 @@ class AplicacionConPestanas(ctk.CTk):
                 self._persist_ingrediente_db(ingr)
             except Exception as e:
                 print("Advertencia al sincronizar ingrediente:", ingr, e)
+
+    def _guardar_pedido_en_bd(self, cliente_id: int):
+        """
+        Guarda el pedido actual (self.pedido) en la base de datos usando el ORM.
+
+        - Crea un registro en PedidoModel.
+        - Por cada menú del pedido crea un registro en PedidoDetalleModel
+          asociando el menu_id correcto (no nulo).
+        """
+        if PedidoModel is None or PedidoDetalleModel is None or MenuModel is None:
+            raise RuntimeError(
+                "Modelos ORM de Pedido/Menu/PedidoDetalle no disponibles."
+            )
+
+        session = get_session()
+        try:
+            # 1) Crear el pedido
+            total = self.pedido.calcular_total()
+            pedido_db = PedidoModel(
+                cliente_id=cliente_id,
+                fecha=datetime.now(),
+                total=total,
+                estado="PAGADO",
+            )
+            session.add(pedido_db)
+            session.flush()  # pedido_db.id disponible
+
+            # 2) Crear detalles
+            for menu in self.pedido.menus:
+                # Buscar el menú en la BD por nombre (case-insensitive)
+                menu_db = (
+                    session.query(MenuModel)
+                    .filter(func.lower(MenuModel.nombre) == menu.nombre.casefold())
+                    .one_or_none()
+                )
+
+                # Si no existe en BD, lo creamos rápido
+                if menu_db is None:
+                    menu_db = MenuModel(
+                        nombre=menu.nombre,
+                        precio=menu.precio,
+                        activo=True,
+                    )
+                    session.add(menu_db)
+                    session.flush()  # ahora menu_db.id ya existe
+
+                detalle_db = PedidoDetalleModel(
+                    pedido_id=pedido_db.id,
+                    menu_id=menu_db.id,  # NOT NULL
+                    cantidad=menu.cantidad,
+                    subtotal=menu.cantidad * menu.precio,
+                )
+                session.add(detalle_db)
+
+            session.commit()
+            return pedido_db.id
+
+        except Exception as e:
+            session.rollback()
+            raise e
+        finally:
+            session.close()
 
 
 # -------------------------------------------------------------------
